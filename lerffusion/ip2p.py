@@ -31,6 +31,7 @@ try:
     from diffusers import (
         DDIMScheduler,
         StableDiffusionInstructPix2PixPipeline,
+        StableDiffusionInpaintPipeline,
     )
     from transformers import logging
 
@@ -48,6 +49,7 @@ DDIM_SOURCE = "CompVis/stable-diffusion-v1-4"
 SD_SOURCE = "runwayml/stable-diffusion-v1-5"
 CLIP_SOURCE = "openai/clip-vit-large-patch14"
 IP2P_SOURCE = "timbrooks/instruct-pix2pix"
+INPAINT_SOURCE = "runwayml/stable-diffusion-inpainting"
 
 
 @dataclass
@@ -68,7 +70,8 @@ class InstructPix2Pix(nn.Module):
         self.num_train_timesteps = num_train_timesteps
         self.ip2p_use_full_precision = ip2p_use_full_precision
 
-        pipe = StableDiffusionInstructPix2PixPipeline.from_pretrained(IP2P_SOURCE, torch_dtype=torch.float16, safety_checker=None)
+        #pipe = StableDiffusionInstructPix2PixPipeline.from_pretrained(IP2P_SOURCE, torch_dtype=torch.float16, safety_checker=None)
+        pipe = StableDiffusionInpaintPipeline.from_pretrained(INPAINT_SOURCE, revision="fp16", torch_dtype=torch.float16, safety_checker=None)
         pipe.scheduler = DDIMScheduler.from_pretrained(DDIM_SOURCE, subfolder="scheduler")
         pipe.scheduler.set_timesteps(100)
         assert pipe is not None
@@ -98,12 +101,13 @@ class InstructPix2Pix(nn.Module):
         self.unet = pipe.unet
         self.auto_encoder = pipe.vae
 
-        CONSOLE.print("InstructPix2Pix loaded!")
+        CONSOLE.print("Inpainting loaded!")
 
     def edit_image(
         self,
         text_embeddings: TensorType["N", "max_length", "embed_dim"],
         image: TensorType["BS", 3, "H", "W"],
+        mask: TensorType["BS", 1, "H", "W"],
         image_cond: TensorType["BS", 3, "H", "W"],  
         guidance_scale: float = 7.5,
         image_guidance_scale: float = 1.5,
@@ -151,6 +155,8 @@ class InstructPix2Pix(nn.Module):
                 # pred noise
                 latent_model_input = torch.cat([latents] * 3)
                 latent_model_input = torch.cat([latent_model_input, image_cond_latents], dim=1)
+                #TODO @David - get mask and cat it to latent_model_input
+                latent_model_input = torch.cat([latent_model_input, mask], dim=1)
 
                 noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
