@@ -116,7 +116,7 @@ class LerffusionPipeline(VanillaPipeline):
         """
 
         #TODO: this ray_bundle should only sample rays that pass through the mask 
-        ray_bundle, batch = self.datamanager.next_train(step)
+        ray_bundle, batch, mask_images = self.datamanager.next_train(step)
 
         model_outputs = self.model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
@@ -135,6 +135,10 @@ class LerffusionPipeline(VanillaPipeline):
                 # generate current index in datamanger
                 current_index = self.datamanager.image_batch["image_idx"][current_spot]
 
+                #TODO: one of these two lines?
+                mask_image = mask_images[i]
+                #mask_image = mask_images[current_spot]
+
                 # get current camera, include camera transforms from original optimizer
                 camera_transforms = self.datamanager.train_camera_optimizer(current_index.unsqueeze(dim=0))
                 current_camera = self.datamanager.train_dataparser_outputs.cameras[current_index].to(self.device)
@@ -144,6 +148,8 @@ class LerffusionPipeline(VanillaPipeline):
                 original_image = original_image.unsqueeze(dim=0).permute(0, 3, 1, 2)
                 camera_outputs = self.model.get_outputs_for_camera_ray_bundle(current_ray_bundle)
                 rendered_image = camera_outputs["rgb"].unsqueeze(dim=0).permute(0, 3, 1, 2)
+                #TODO: do we need this??
+                #mask_image = mask_image.unsqueeze(dim=0).permute(0, 3, 1, 2)
 
                 # delete to free up memory
                 del camera_outputs
@@ -156,6 +162,7 @@ class LerffusionPipeline(VanillaPipeline):
                 edited_image = self.ip2p.edit_image(
                             self.text_embedding.to(self.ip2p_device),
                             rendered_image.to(self.ip2p_device),
+                            mask_image.to(self.ip2p_device),
                             original_image.to(self.ip2p_device),
                             guidance_scale=self.config.guidance_scale,
                             image_guidance_scale=self.config.image_guidance_scale,

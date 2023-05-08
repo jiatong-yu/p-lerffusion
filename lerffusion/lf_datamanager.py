@@ -66,12 +66,29 @@ class LerffusionDataManager(VanillaDataManager):
         self.original_image_batch['image'] = self.image_batch['image'].clone()
         self.original_image_batch['image_idx'] = self.image_batch['image_idx'].clone()
 
+    def get_mask(self, img):
+        raise NotImplementedError
+    
+    def get_batch_masks(self, image_batch):
+
+        images = image_batch['image'].clone()
+        if isinstance(images, list):
+            masks = [self.get_mask(img) for img in images]
+            return masks
+        else:
+            return self.get_mask(images) #TODO: does this need to be a list?
+
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
         assert self.train_pixel_sampler is not None
+
+        #TODO @jiatong add function to get mask using Yolov5
+        mask_images = self.get_batch_masks(self.image_batch)
+        self.image_batch["mask"] = mask_images
+
         batch = self.train_pixel_sampler.sample(self.image_batch)
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)
         
-        return ray_bundle, batch
+        return ray_bundle, batch, mask_images
