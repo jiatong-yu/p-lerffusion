@@ -107,7 +107,7 @@ class InstructPix2Pix(nn.Module):
         self,
         text_embeddings: TensorType["N", "max_length", "embed_dim"],
         image: TensorType["BS", 3, "H", "W"],
-        mask: TensorType["BS", 1, "H", "W"],
+        mask_image: TensorType["BS", 1, "H", "W"],
         image_cond: TensorType["BS", 3, "H", "W"],  
         guidance_scale: float = 7.5,
         image_guidance_scale: float = 1.5,
@@ -142,6 +142,8 @@ class InstructPix2Pix(nn.Module):
             # prepare image and image_cond latents
             latents = self.imgs_to_latent(image)
             image_cond_latents = self.prepare_image_latents(image_cond)
+            mask, masked_image = self.prepare_masked_image(image, mask_image)
+            mask, masked_image_latents = self.prepare_mask_latents(mask, masked_image)
 
         # add noise
         noise = torch.randn_like(latents)
@@ -153,10 +155,10 @@ class InstructPix2Pix(nn.Module):
             # predict the noise residual with unet, NO grad!
             with torch.no_grad():
                 # pred noise
-                latent_model_input = torch.cat([latents] * 3)
-                latent_model_input = torch.cat([latent_model_input, image_cond_latents], dim=1)
-                #TODO @David - get mask and cat it to latent_model_input
-                latent_model_input = torch.cat([latent_model_input, mask], dim=1)
+                #latent_model_input = torch.cat([latents] * 3)
+                latent_model_input = torch.cat([latents] * 2)
+                #latent_model_input = torch.cat([latent_model_input, image_cond_latents], dim=1)
+                latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
 
                 noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
@@ -223,6 +225,35 @@ class InstructPix2Pix(nn.Module):
         image_latents = torch.cat([image_latents, image_latents, uncond_image_latents], dim=0)
 
         return image_latents
+    
+    def prepare_masked_image(self, image, mask):
+        '''
+        Adapted from HuggingFace scripts
+        '''
+        # Binarize mask
+        #TODO: is it ok that this isn't a deep copy?
+        mask[mask < 0.5] = 0
+        mask[mask >= 0.5] = 1
+
+        #mask = [mask]
+
+        masked_image = image * (mask < 0.5)
+
+        return mask, masked_image
+    
+    def prepare_mask_latents(self, mask, masked_image, generator=None):#TODO: should generator be None?
+        '''
+        Adapted from HuggingFace scripts
+        '''
+
+        masked_image_latents = self.auto_encoder.encode(masked_image).latent_dist.sample(generator=generator)#TODO: replace .sample() w/ .sample ?/
+        masked_image_latents = self.auto_encoder.config.scaling_factor * masked_image_latents #TODO: might be necessary to delete this line
+
+        #TODO: might need to delete these 2 lines
+        mask = torch.cat([mask] * 2)
+        masked_image_latents = torch.cat([masked_image_latents] * 2)
+
+        return mask, masked_image_latents
 
     def forward(self):
         """Not implemented since we only want the parameter saving of the nn module, but not forward()"""
