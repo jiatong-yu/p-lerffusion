@@ -36,7 +36,7 @@ disable = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["lerffusion*"]
+include = ["lerffusion"]
 
 [project.entry-points.'nerfstudio.method_configs']
 lerffusion = 'lerffusion.lf_config:lerffusion_method'
