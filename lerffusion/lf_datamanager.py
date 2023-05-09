@@ -22,12 +22,11 @@ from nerfstudio.data.datamanagers.base_datamanager import (
 )
 
 # Our own imports
-import cv2
+import torch
 #import PIL
 from transformers import YolosFeatureExtractor, YolosForObjectDetection
 #import torch
 import yolov5
-import numpy as np
 
 CONSOLE = Console(width=120)
 
@@ -76,8 +75,10 @@ class LerffusionDataManager(VanillaDataManager):
         self.original_image_batch['image_idx'] = self.image_batch['image_idx'].clone()
 
         self.yolo = self.load_yolo5_model()
-        self.yolo_feature_extractor = YolosFeatureExtractor.from_pretrained('hustvl/yolos-tiny')
-        self.yolo_obj = YolosForObjectDetection.from_pretrained('hustvl/yolos-tiny')
+        #self.yolo_feature_extractor = YolosFeatureExtractor.from_pretrained('hustvl/yolos-tiny')
+        #self.yolo_obj = YolosForObjectDetection.from_pretrained('hustvl/yolos-tiny')
+
+        self.mask_images = [self.get_mask(img) for img in self.original_image_batch['image']]
 
     def load_yolo5_model():
         """
@@ -94,40 +95,47 @@ class LerffusionDataManager(VanillaDataManager):
 
     def get_mask(self, img):
 
-        #TODO @jiatong do you still need these?
         #inputs = self.yolo_feature_extractor(images=img, return_tensors="pt")
         #outputs = self.yolo_obj(**inputs)
 
-        predictions = self.yolo(img).pred[0]
+        pred = self.yolo(img).xyxy[0]
+        boxes = pred[:, :4]
+        categories = pred[:, 5]
+        #print(categories)
+        bbox = boxes[int((categories==47).nonzero(as_tuple=True)[0][0])].int()
+        mask_img = torch.unsqueeze(torch.zeros_like(img[:,:,0]),dim=-1)#TODO is img here ok?
+        # mask_img = tensor_img.clone()
+        mask_img[bbox[1]-50:bbox[3]+50, bbox[0]-50:bbox[2]+50] = 255
 
-        box = predictions[int((predictions[:,5] == 47).nonzero(as_tuple=True)[0])][:4] #x1,y1,x2,y2
-        mask = np.zeros(img.shape)
-        #TODO @jiatong do we really need to be using cv2 here?
-        mask = cv2.rectangle(mask,pt1=(int(box[0]),int(box[1])),pt2=(int(box[2]),int(box[3])),color=(0,)*3,thickness=-1)
+        return mask_img
 
-        #TODO @jiatong finish me
-        raise NotImplementedError
+        # predictions = self.yolo(img).pred[0]
+
+        # box = predictions[int((predictions[:,5] == 47).nonzero(as_tuple=True)[0])][:4] #x1,y1,x2,y2
+        # mask = np.zeros(img.shape)
+        # #TODO @jiatong do we really need to be using cv2 here?
+        # mask = cv2.rectangle(mask,pt1=(int(box[0]),int(box[1])),pt2=(int(box[2]),int(box[3])),color=(0,)*3,thickness=-1)
     
     def get_batch_masks(self, image_batch):
 
         images = image_batch['image'].clone()
         if isinstance(images, list):
-            masks = [self.get_mask(img) for img in images]
+            masks = torch.cat([self.get_mask(img) for img in images], dim=0)
             return masks
         else:
-            return self.get_mask(images) #TODO: does this need to be a list?
+            return self.get_mask(images)[None, :, :, :] #TODO: does this need to be a list?
 
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
         assert self.train_pixel_sampler is not None
 
-        #TODO @jiatong add function to get mask using Yolov5
-        mask_images = self.get_batch_masks(self.image_batch)
-        self.image_batch["mask"] = mask_images
+
+        #mask_images = self.get_batch_masks(self.image_batch)
+        #self.image_batch["mask"] = mask_images
 
         batch = self.train_pixel_sampler.sample(self.image_batch)
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)
         
-        return ray_bundle, batch, mask_images
+        return ray_bundle, batch

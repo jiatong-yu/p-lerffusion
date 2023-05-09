@@ -23,6 +23,7 @@ from typing import Union
 import torch
 from rich.console import Console
 from torch import nn
+from torchvision import transforms
 from torchtyping import TensorType
 
 CONSOLE = Console(width=120)
@@ -71,13 +72,21 @@ class InstructPix2Pix(nn.Module):
         self.ip2p_use_full_precision = ip2p_use_full_precision
 
         #pipe = StableDiffusionInstructPix2PixPipeline.from_pretrained(IP2P_SOURCE, torch_dtype=torch.float16, safety_checker=None)
+        '''
         pipe = StableDiffusionInpaintPipeline.from_pretrained(INPAINT_SOURCE, revision="fp16", torch_dtype=torch.float16, safety_checker=None)
         pipe.scheduler = DDIMScheduler.from_pretrained(DDIM_SOURCE, subfolder="scheduler")
         pipe.scheduler.set_timesteps(100)
         assert pipe is not None
         pipe = pipe.to(self.device)
+        '''
+        pipe = StableDiffusionInpaintPipeline.from_pretrained(
+            "runwayml/stable-diffusion-inpainting", torch_dtype=torch.float16
+        )
+        pipe = pipe.to(self.device)
 
         self.pipe = pipe
+
+        self.tran = transforms.Normalize([0.5],[0.5])
 
         # improve memory performance
         pipe.enable_attention_slicing()

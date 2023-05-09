@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from itertools import cycle
 from typing import Optional, Type
 import torch
+from torchvision import transforms
 from typing_extensions import Literal
+from diffusers import StableDiffusionInpaintPipeline
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.viewer.server.viewer_elements import ViewerNumber, ViewerText
 
@@ -74,6 +76,14 @@ class LerffusionPipeline(VanillaPipeline):
 
         self.ip2p = InstructPix2Pix(self.ip2p_device, ip2p_use_full_precision=self.config.ip2p_use_full_precision)
 
+        pipe = StableDiffusionInpaintPipeline.from_pretrained(
+            "runwayml/stable-diffusion-inpainting", torch_dtype=torch.float16
+        )
+        pipe = pipe.to(self.device)
+        self.pipe = pipe
+
+        self.tran = transforms.Normalize([0.5],[0.5])
+
 
         # load base text embedding using classifier free guidance
         self.text_embedding = self.ip2p.pipe._encode_prompt(
@@ -109,6 +119,22 @@ class LerffusionPipeline(VanillaPipeline):
             self.config.prompt, device=self.ip2p_device, num_images_per_prompt=1, do_classifier_free_guidance=True, negative_prompt=""
         )
 
+    def edit_img(self, tensor_img, mask_img):
+        input_pic = transforms.functional.to_pil_image(tensor_img.permute(-1,0,1),"RGB")
+        input_mask = transforms.functional.to_pil_image(mask_img.permute(-1,0,1),"L")
+
+        image = self.pipe(prompt="a glass of red wine on the table", 
+             image=input_pic, 
+             mask_image=input_mask,
+             guidance_scale = 50,
+            ).images[0]
+        
+        return image
+    
+    def norm_img(self, img):
+        n_img = self.tran(img/255.0)
+        return n_img
+
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict and performs image editing.
         Args:
@@ -116,7 +142,7 @@ class LerffusionPipeline(VanillaPipeline):
         """
 
         #TODO: this ray_bundle should only sample rays that pass through the mask 
-        ray_bundle, batch, mask_images = self.datamanager.next_train(step)
+        ray_bundle, batch = self.datamanager.next_train(step)
 
         model_outputs = self.model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
@@ -135,9 +161,8 @@ class LerffusionPipeline(VanillaPipeline):
                 # generate current index in datamanger
                 current_index = self.datamanager.image_batch["image_idx"][current_spot]
 
-                #TODO: one of these two lines?
-                mask_image = mask_images[i]
-                #mask_image = mask_images[current_spot]
+                mask_image = self.datamanager.mask_images[current_spot]
+                #mask_image = mask_images[current_spot,:,:,:]
 
                 # get current camera, include camera transforms from original optimizer
                 camera_transforms = self.datamanager.train_camera_optimizer(current_index.unsqueeze(dim=0))
@@ -157,8 +182,23 @@ class LerffusionPipeline(VanillaPipeline):
                 del current_ray_bundle
                 del camera_transforms
                 torch.cuda.empty_cache()
-                
-                #TODO: @jiatong I'll try to add lerf support for this one. 
+
+                #input_pic = transforms.functional.to_pil_image(tensor_img.permute(-1,0,1),"RGB")
+                HEIGHT_MID = rendered_image.shape[2] // 2
+                WIDTH_MID = rendered_image.shape[3] // 2
+                CROP_MID = 500
+                h_lo =  HEIGHT_MID - CROP_MID
+                h_hi = HEIGHT_MID + CROP_MID
+                w_lo = WIDTH_MID - CROP_MID
+                w_hi = WIDTH_MID + CROP_MID
+                input_pic = rendered_image.clone()[:,:,h_lo:h_hi,w_lo:w_hi]
+                input_pic = transforms.functional.to_pil_image(input_pic, "RGB")
+                input_mask = transforms.functional.to_pil_image(mask_image.permute(-1,0,1),"L")
+                 
+                edited_image_cropped = self.edit_img(input_pic, input_mask)
+                edited_image = rendered_image.clone()
+                edited_image[:,:,h_lo:h_hi,w_lo:w_hi] = edited_image_cropped
+                '''
                 edited_image = self.ip2p.edit_image(
                             self.text_embedding.to(self.ip2p_device),
                             rendered_image.to(self.ip2p_device),
@@ -170,6 +210,7 @@ class LerffusionPipeline(VanillaPipeline):
                             lower_bound=self.config.lower_bound,
                             upper_bound=self.config.upper_bound,
                         )
+                '''
 
                 # resize to original image size (often not necessary)
                 if (edited_image.size() != rendered_image.size()):
