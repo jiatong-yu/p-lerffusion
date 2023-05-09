@@ -74,7 +74,8 @@ class LerffusionPipeline(VanillaPipeline):
             else torch.device(self.config.ip2p_device)
         )
 
-        self.ip2p = InstructPix2Pix(self.ip2p_device, ip2p_use_full_precision=self.config.ip2p_use_full_precision)
+
+        #self.ip2p = InstructPix2Pix(self.ip2p_device, ip2p_use_full_precision=self.config.ip2p_use_full_precision)
 
         pipe = StableDiffusionInpaintPipeline.from_pretrained(
             "runwayml/stable-diffusion-inpainting", torch_dtype=torch.float16
@@ -82,13 +83,13 @@ class LerffusionPipeline(VanillaPipeline):
         pipe = pipe.to(self.device)
         self.pipe = pipe
 
-        self.tran = transforms.Normalize([0.5],[0.5])
+        #self.tran = transforms.Normalize([0.5],[0.5])
 
 
         # load base text embedding using classifier free guidance
-        self.text_embedding = self.ip2p.pipe._encode_prompt(
-            self.config.prompt, device=self.ip2p_device, num_images_per_prompt=1, do_classifier_free_guidance=True, negative_prompt=""
-        )
+        # self.text_embedding = self.pipe._encode_prompt(
+        #     self.config.prompt, device=self.ip2p_device, num_images_per_prompt=1, do_classifier_free_guidance=True, negative_prompt=""
+        # )
         # =============
 
         # keep track of spot in dataset
@@ -115,25 +116,25 @@ class LerffusionPipeline(VanillaPipeline):
         """Callback for prompt box, change prompt in config and update text embedding"""
         self.config.prompt = handle.value
         
-        self.text_embedding = self.ip2p.pipe._encode_prompt(
-            self.config.prompt, device=self.ip2p_device, num_images_per_prompt=1, do_classifier_free_guidance=True, negative_prompt=""
-        )
+        # self.text_embedding = self.ip2p.pipe._encode_prompt(
+        #     self.config.prompt, device=self.ip2p_device, num_images_per_prompt=1, do_classifier_free_guidance=True, negative_prompt=""
+        # )
 
-    def edit_img(self, tensor_img, mask_img):
-        input_pic = transforms.functional.to_pil_image(tensor_img.permute(-1,0,1),"RGB")
-        input_mask = transforms.functional.to_pil_image(mask_img.permute(-1,0,1),"L")
+    def edit_img(self, input_pic, input_mask):
+        # input_pic = transforms.functional.to_pil_image(tensor_img.permute(-1,0,1),"RGB")
+        # input_mask = transforms.functional.to_pil_image(mask_img.permute(-1,0,1),"L")
 
         image = self.pipe(prompt="a glass of red wine on the table", 
-             image=input_pic, 
-             mask_image=input_mask,
+             image=input_pic.resize([512,512]), 
+             mask_image=input_mask.resize([512,512]),
              guidance_scale = 50,
             ).images[0]
         
         return image
     
-    def norm_img(self, img):
-        n_img = self.tran(img/255.0)
-        return n_img
+    # def norm_img(self, img):
+    #     n_img = self.tran(img/255.0)
+    #     return n_img
 
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict and performs image editing.
@@ -161,8 +162,8 @@ class LerffusionPipeline(VanillaPipeline):
                 # generate current index in datamanger
                 current_index = self.datamanager.image_batch["image_idx"][current_spot]
 
-                mask_image = self.datamanager.mask_images[current_spot]
-                #mask_image = mask_images[current_spot,:,:,:]
+                #mask_image = self.datamanager.mask_images[current_spot]
+                mask_image = self.datamanager.mask_images[current_spot,:,:,:]
 
                 # get current camera, include camera transforms from original optimizer
                 camera_transforms = self.datamanager.train_camera_optimizer(current_index.unsqueeze(dim=0))
@@ -173,6 +174,9 @@ class LerffusionPipeline(VanillaPipeline):
                 original_image = original_image.unsqueeze(dim=0).permute(0, 3, 1, 2)
                 camera_outputs = self.model.get_outputs_for_camera_ray_bundle(current_ray_bundle)
                 rendered_image = camera_outputs["rgb"].unsqueeze(dim=0).permute(0, 3, 1, 2)
+                # print(f"rendered image shape: {rendered_image.shape}")
+                # temp_pic = transforms.functional.to_pil_image(torch.squeeze(rendered_image,dim=0), "RGB")
+                # temp_pic.save("rendered_img.png")
                 #TODO: do we need this??
                 #mask_image = mask_image.unsqueeze(dim=0).permute(0, 3, 1, 2)
 
@@ -184,20 +188,28 @@ class LerffusionPipeline(VanillaPipeline):
                 torch.cuda.empty_cache()
 
                 #input_pic = transforms.functional.to_pil_image(tensor_img.permute(-1,0,1),"RGB")
-                HEIGHT_MID = rendered_image.shape[2] // 2
-                WIDTH_MID = rendered_image.shape[3] // 2
-                CROP_MID = 500
-                h_lo =  HEIGHT_MID - CROP_MID
-                h_hi = HEIGHT_MID + CROP_MID
-                w_lo = WIDTH_MID - CROP_MID
-                w_hi = WIDTH_MID + CROP_MID
-                input_pic = rendered_image.clone()[:,:,h_lo:h_hi,w_lo:w_hi]
-                input_pic = transforms.functional.to_pil_image(input_pic, "RGB")
-                input_mask = transforms.functional.to_pil_image(mask_image.permute(-1,0,1),"L")
+                # HEIGHT_MID = rendered_image.shape[2] // 2
+                # WIDTH_MID = rendered_image.shape[3] // 2
+                # CROP_MID = 350
+                # h_lo =  HEIGHT_MID - CROP_MID
+                # h_hi = HEIGHT_MID + CROP_MID
+                # w_lo = WIDTH_MID - CROP_MID
+                # w_hi = WIDTH_MID + CROP_MID
+                # print(f"{h_lo} {h_hi} {w_lo} {w_hi}")
+                # input_pic = rendered_image.clone()[:,:,h_lo:h_hi,w_lo:w_hi]
+                # print("input pic shape after crop: ", str(input_pic.shape))
+
+                input_pic = transforms.functional.to_pil_image(torch.squeeze(rendered_image,dim=0), "RGB")
+                input_mask = transforms.functional.to_pil_image(torch.squeeze(mask_image,dim=0),"L")
+                # input_pic.save("input_pic.png")
+                # input_mask.save("input_mask.png")
                  
-                edited_image_cropped = self.edit_img(input_pic, input_mask)
-                edited_image = rendered_image.clone()
-                edited_image[:,:,h_lo:h_hi,w_lo:w_hi] = edited_image_cropped
+                edited_image = self.edit_img(input_pic, input_mask)
+                # edited_image = rendered_image.clone()
+                #edited_image[:,:,h_lo:h_hi,w_lo:w_hi] = edited_image_cropped
+                # edited_image.resize(input_pic.size).save("edited_image.png")
+                edited_image = transforms.ToTensor()(edited_image).unsqueeze_(0)
+                
                 '''
                 edited_image = self.ip2p.edit_image(
                             self.text_embedding.to(self.ip2p_device),

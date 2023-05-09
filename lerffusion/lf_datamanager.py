@@ -21,12 +21,14 @@ from nerfstudio.data.datamanagers.base_datamanager import (
     VanillaDataManagerConfig,
 )
 
+import numpy as np
 # Our own imports
 import torch
 #import PIL
 from transformers import YolosFeatureExtractor, YolosForObjectDetection
 #import torch
 import yolov5
+import PIL
 
 CONSOLE = Console(width=120)
 
@@ -78,9 +80,17 @@ class LerffusionDataManager(VanillaDataManager):
         #self.yolo_feature_extractor = YolosFeatureExtractor.from_pretrained('hustvl/yolos-tiny')
         #self.yolo_obj = YolosForObjectDetection.from_pretrained('hustvl/yolos-tiny')
 
-        self.mask_images = [self.get_mask(img) for img in self.original_image_batch['image']]
+        #print(type(self.original_image_batch['image'])) 
+        #print(self.original_image_batch['image'].shape)
+        
 
-    def load_yolo5_model():
+
+        #self.mask_images = [self.get_mask(img) for img in self.original_image_batch['image']]
+        #self.mask_images = self.get_mask(self.original_image_batch['image'].permute(0,3,1,2))
+        self.mask_images = self.get_mask([img.numpy() for img in self.original_image_batch['image']])
+
+
+    def load_yolo5_model(self):
         """
         Returns:
             Yolo5 model. see https://github.com/fcakyon/yolov5-pip for documentation
@@ -93,21 +103,42 @@ class LerffusionDataManager(VanillaDataManager):
         model.max_det = 20  # maximum number of detections per image
         return model
 
-    def get_mask(self, img):
+    def get_mask(self, imgs):
 
         #inputs = self.yolo_feature_extractor(images=img, return_tensors="pt")
         #outputs = self.yolo_obj(**inputs)
+        test = imgs[0] * 255
+        im = PIL.Image.fromarray(test.astype(np.uint8))
+        im.save("/n/fs/nlp-jiatongy/lerffusion/debug.png")
+        # for img in imgs: 
+        #     print(img.shape)
+        pass_imgs = [img*255 for img in imgs]
+        preds = self.yolo(pass_imgs).xyxy #numpy form
 
-        pred = self.yolo(img).xyxy[0]
-        boxes = pred[:, :4]
-        categories = pred[:, 5]
-        #print(categories)
-        bbox = boxes[int((categories==47).nonzero(as_tuple=True)[0][0])].int()
-        mask_img = torch.unsqueeze(torch.zeros_like(img[:,:,0]),dim=-1)#TODO is img here ok?
-        # mask_img = tensor_img.clone()
-        mask_img[bbox[1]-50:bbox[3]+50, bbox[0]-50:bbox[2]+50] = 255
+        boxes_list = [pred[:, :4] for pred in preds]
+        categories_list = [pred[:, 5] for pred in preds] 
+        # print(categories_list)       
+        # for idx, ctr in enumerate(categories_list): 
+        #     print((ctr==47).nonzero(as_tuple=True))
+        #     if len((ctr==47).nonzero(as_tuple=True)[0]) == 0: 
+        #         print("empty")
+        #         im = PIL.Image.fromarray((imgs[idx]*255).astype(np.uint8))
+        #         im.save("/n/fs/nlp-jiatongy/lerffusion/n_debug.png")
+        mask_imgs = []
+        for idx, ctr in enumerate(categories_list): 
+            # empty 
+            img = imgs[idx]
+            if len((ctr==47).nonzero(as_tuple=True)[0]) == 0: 
+                mask_img = torch.unsqueeze(torch.zeros(img[:,:,0].shape),dim=-1)
+            else: 
+                bbox = boxes_list[idx][int((ctr==47).nonzero(as_tuple=True)[0][0])].int()
+                mask_img = torch.unsqueeze(torch.zeros(img[:,:,0].shape),dim=-1)
+                mask_img[bbox[1]-50:bbox[3]+50, bbox[0]-50:bbox[2]+50] = 255
+            mask_imgs.append(mask_img)
 
-        return mask_img
+        mask_imgs = torch.stack(mask_imgs, dim=0).permute(0,-1,1,2)
+
+        return mask_imgs
 
         # predictions = self.yolo(img).pred[0]
 
